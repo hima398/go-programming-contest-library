@@ -19,19 +19,19 @@ jobs:
     # See: https://circleci.com/docs/2.0/configuration-reference/#steps
     steps:
       - checkout
-      - restore_cache:
-          keys:
-            - go-mod-v4-{{ checksum "go.sum" }}
+      #- restore_cache:
+      #    keys:
+      #      - go-mod-v4-{{ checksum "go.sum" }}
       - run:
           name: Install Dependencies
           command: go mod download
-      - save_cache:
-          key: go-mod-v4-{{ checksum "go.sum" }}
-          paths:
-            - "/go/pkg/mod"
+      #- save_cache:
+      #    key: go-mod-v4-{{ checksum "go.sum" }}
+      #    paths:
+      #      - "/go/pkg/mod"
       - run:
           name: Run tests
-          command: go test -race -coverprofile=coverage.txt -covermode=atomic
+          command: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
           #command: |
           #  mkdir -p /tmp/test-reports
           #  gotestsum --junitfile /tmp/test-reports/unit-tests.xml
