@@ -1,0 +1,8 @@
+mode: atomic
+github.com/hima398/go-programming-contest-library/fenwicktree/fenwicktree.go:10.30,12.2 1 0
+github.com/hima398/go-programming-contest-library/fenwicktree/fenwicktree.go:14.41,21.2 4 0
+github.com/hima398/go-programming-contest-library/fenwicktree/fenwicktree.go:24.42,27.16 1 1
+github.com/hima398/go-programming-contest-library/fenwicktree/fenwicktree.go:27.16,30.3 2 1
+github.com/hima398/go-programming-contest-library/fenwicktree/fenwicktree.go:34.42,37.12 2 6
+github.com/hima398/go-programming-contest-library/fenwicktree/fenwicktree.go:41.2,41.12 1 6
+github.com/hima398/go-programming-contest-library/fenwicktree/fenwicktree.go:37.12,40.3 2 6
