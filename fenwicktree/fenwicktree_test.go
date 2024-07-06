@@ -1,6 +1,10 @@
 package fenwicktree
 
-import "testing"
+import (
+	"fmt"
+	"reflect"
+	"testing"
+)
 
 func TestFenwickTree_Query(t *testing.T) {
 	type fields struct {
@@ -31,6 +35,38 @@ func TestFenwickTree_Query(t *testing.T) {
 			}
 			if got := fen.Query(tt.args.i); got != tt.want {
 				t.Errorf("FenwickTree.Query() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFenwickTree_Update(t *testing.T) {
+	type fields struct {
+		n     int
+		nodes []int
+	}
+	type args struct {
+		i int
+		v int
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		want   []int
+	}{
+		{"Size n, [0, 4]", fields{4, []int{0, 1, 1, 1, 0}}, args{3, 1}, []int{0, 0, 0, 0, 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fen := &FenwickTree{
+				n:     tt.fields.n,
+				nodes: tt.fields.nodes,
+			}
+			fen.Update(tt.args.i, tt.args.v)
+			fmt.Println(fen.nodes)
+			if !reflect.DeepEqual(fen.nodes, tt.want) {
+				t.Errorf("FenwickTree.Query() = %v, want %v", fen.nodes, tt.want)
 			}
 		})
 	}
