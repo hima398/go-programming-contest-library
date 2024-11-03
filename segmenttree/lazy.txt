@@ -1,4 +1,4 @@
-package segmenttree
+package lazysegmenttree
 
 type LazySegmentTree struct {
 	size  int

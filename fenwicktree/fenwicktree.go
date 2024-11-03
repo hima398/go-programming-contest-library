@@ -6,7 +6,6 @@ type FenwickTree struct {
 	//eval  func(x1, x2 int) int
 }
 
-//
 func New(n int) *FenwickTree {
 	return NewFenwickTree(n)
 }
@@ -20,17 +19,17 @@ func NewFenwickTree(n int) *FenwickTree {
 	return fen
 }
 
-//i(0-indexed)をvに更新する
+// i(0-indexed)をvに更新する
 func (fen *FenwickTree) Update(i, v int) {
 	//内部では1-indexedなのでここでインクリメントする
-	//i++
+	i++
 	for i < fen.n {
 		fen.nodes[i] = fen.nodes[i] + v //fen.eval(fen.nodes[i], v)
 		i += i & -i
 	}
 }
 
-//i(0-indexed)の値を取得する
+// i(0-indexed)の値を取得する
 func (fen *FenwickTree) Query(i int) int {
 	//i++
 	res := 0
