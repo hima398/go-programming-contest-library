@@ -38,6 +38,14 @@ func (tree *LazySegmentTree) Init(e, inf int, op func(x, y int) int, mapping fun
 	tree.composition = composition
 }
 
+func (tree *LazySegmentTree) Set(i, v int) {
+	i += tree.size
+	tree.node[i] = v
+	for shift := 1; shift <= 60; shift++ {
+		tree.update(i >> shift)
+	}
+}
+
 func (tree *LazySegmentTree) Prod(l, r int) int {
 	if l == r {
 		return tree.e

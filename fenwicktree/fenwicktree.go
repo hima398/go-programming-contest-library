@@ -39,3 +39,8 @@ func (fen *FenwickTree) Query(i int) int {
 	}
 	return res
 }
+
+// l - rの合計を取得する
+func (fen *FenwickTree) Sum(l, r int) int {
+	return fen.Query(r) - fen.Query(l)
+}
