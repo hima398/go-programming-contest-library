@@ -61,30 +61,71 @@ func bundle(mainPath string) ([]byte, error) {
 		return nil, err
 	}
 
+	// go.mod の require / replace ブロックを解析
+	gomodData, err := os.ReadFile(filepath.Join(modRoot, "go.mod"))
+	if err != nil {
+		return nil, fmt.Errorf("go.mod 読み込みエラー: %w", err)
+	}
+	gomodStr := string(gomodData)
+	requires := parseRequires(gomodStr)
+	replaces := parseReplaces(gomodStr, modRoot)
+
 	fset := token.NewFileSet()
 	mainFile, err := parser.ParseFile(fset, absMain, nil, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("main.go parse error: %w", err)
 	}
 
-	// ローカル import を収集
+	// import を自モジュール / 外部モジュール / 標準ライブラリに分類
 	var localPkgs []pkgMeta
+	inlinedPaths := map[string]bool{} // インライン展開するパス
+
 	for _, imp := range mainFile.Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
-		if !strings.HasPrefix(path, modName+"/") {
-			continue
-		}
 		shortName := path[strings.LastIndex(path, "/")+1:]
-		rel := strings.TrimPrefix(path, modName+"/")
-		localPkgs = append(localPkgs, pkgMeta{
-			importPath: path,
-			shortName:  shortName,
-			dir:        filepath.Join(modRoot, rel),
-		})
+
+		if strings.HasPrefix(path, modName+"/") {
+			// 自モジュール: modRoot 以下で解決
+			rel := strings.TrimPrefix(path, modName+"/")
+			localPkgs = append(localPkgs, pkgMeta{
+				importPath: path,
+				shortName:  shortName,
+				dir:        filepath.Join(modRoot, rel),
+			})
+			inlinedPaths[path] = true
+		} else {
+			// 外部モジュール: replace → GOMODCACHE の順で解決
+			extMod, ver, subPath, ok := findModuleForImport(path, requires)
+			if !ok {
+				// require になくても replace だけある場合（go.sum 管理外のローカル置換）
+				extMod, _, subPath, ok = findModuleForImport(path, replaces)
+				if !ok {
+					continue
+				}
+				ver = ""
+			}
+			var srcDir string
+			if localPath, ok := replaces[extMod]; ok {
+				// replace ディレクティブ優先（ローカルチェックアウト）
+				srcDir = localPath
+			} else {
+				// モジュールキャッシュから解決
+				srcDir, err = resolveModuleDir(extMod, ver)
+				if err != nil {
+					return nil, fmt.Errorf("外部モジュール解決失敗 %s: %w", path, err)
+				}
+			}
+			pkgDir := filepath.Join(srcDir, subPath)
+			localPkgs = append(localPkgs, pkgMeta{
+				importPath: path,
+				shortName:  shortName,
+				dir:        pkgDir,
+			})
+			inlinedPaths[path] = true
+		}
 	}
 
 	if len(localPkgs) == 0 {
-		// ローカル import なし → そのまま出力
 		var buf strings.Builder
 		if err := format.Node(&buf, fset, mainFile); err != nil {
 			return nil, err
@@ -100,7 +141,7 @@ func bundle(mainPath string) ([]byte, error) {
 		names   []string
 	}
 	allPkgs := []pkgInfo{}
-	nameCount := map[string]int{} // name → 何パッケージに存在するか
+	nameCount := map[string]int{}
 
 	for _, pkg := range localPkgs {
 		decls, imports, names, err := parsePackage(fset, pkg.dir)
@@ -114,7 +155,6 @@ func bundle(mainPath string) ([]byte, error) {
 	}
 
 	// rename マップを構築: pkgShortName → {oldName → newName}
-	// 衝突する名前は pkgShortName + Name でプレフィックスを付ける
 	pkgRename := map[string]map[string]string{}
 	for _, pi := range allPkgs {
 		renames := map[string]string{}
@@ -130,11 +170,11 @@ func bundle(mainPath string) ([]byte, error) {
 
 	b := &bundler{fset: fset, pkgRename: pkgRename}
 
-	// 標準 import を収集（ローカル import は除去）
+	// 標準 import を収集（インライン展開するパスは除去）
 	stdImports := map[string]bool{}
 	for _, imp := range mainFile.Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
-		if !strings.HasPrefix(path, modName+"/") {
+		if !inlinedPaths[path] {
 			stdImports[path] = true
 		}
 	}
@@ -161,6 +201,125 @@ func bundle(mainPath string) ([]byte, error) {
 		return nil, fmt.Errorf("format error: %w", err)
 	}
 	return []byte(buf.String()), nil
+}
+
+// findModuleForImport は importPath がどの外部モジュールに属するかを requires から探す。
+// 最長一致（より具体的なモジュール名を優先）で返す。
+func findModuleForImport(importPath string, requires map[string]string) (modName, version, subPath string, ok bool) {
+	bestLen := 0
+	for mod, ver := range requires {
+		if importPath == mod || strings.HasPrefix(importPath, mod+"/") {
+			if len(mod) > bestLen {
+				bestLen = len(mod)
+				modName, version = mod, ver
+				subPath = strings.TrimPrefix(strings.TrimPrefix(importPath, mod), "/")
+				ok = true
+			}
+		}
+	}
+	return
+}
+
+// resolveModuleDir は Go モジュールキャッシュからモジュールのローカルパスを返す。
+func resolveModuleDir(modName, version string) (string, error) {
+	cacheDir := os.Getenv("GOMODCACHE")
+	if cacheDir == "" {
+		goPath := os.Getenv("GOPATH")
+		if goPath == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", fmt.Errorf("GOMODCACHE/GOPATH 未設定かつホームディレクトリ取得失敗: %w", err)
+			}
+			goPath = filepath.Join(home, "go")
+		}
+		cacheDir = filepath.Join(goPath, "pkg", "mod")
+	}
+	dir := filepath.Join(cacheDir, modName+"@"+version)
+	if _, err := os.Stat(dir); err != nil {
+		return "", fmt.Errorf("モジュールキャッシュに %s@%s が見つかりません（%s）", modName, version, dir)
+	}
+	return dir, nil
+}
+
+// parseRequires は go.mod テキストから require ブロックを解析して {moduleName → version} を返す。
+func parseRequires(gomod string) map[string]string {
+	result := map[string]string{}
+	lines := strings.Split(gomod, "\n")
+	inBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "require (" {
+			inBlock = true
+			continue
+		}
+		if inBlock {
+			if trimmed == ")" {
+				inBlock = false
+				continue
+			}
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 && !strings.HasPrefix(parts[0], "//") {
+				result[parts[0]] = parts[1]
+			}
+		} else if strings.HasPrefix(trimmed, "require ") {
+			rest := strings.TrimPrefix(trimmed, "require ")
+			parts := strings.Fields(rest)
+			if len(parts) >= 2 {
+				result[parts[0]] = parts[1]
+			}
+		}
+	}
+	return result
+}
+
+// parseReplaces は go.mod の replace ディレクティブから {moduleName → localPath} を返す。
+// ローカルパス（/ または . 始まり）の replace のみを対象とする。
+func parseReplaces(gomod, modRoot string) map[string]string {
+	result := map[string]string{}
+	lines := strings.Split(gomod, "\n")
+	inBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "replace (" {
+			inBlock = true
+			continue
+		}
+		if inBlock && trimmed == ")" {
+			inBlock = false
+			continue
+		}
+		var replLine string
+		if inBlock {
+			replLine = trimmed
+		} else if strings.HasPrefix(trimmed, "replace ") {
+			replLine = strings.TrimPrefix(trimmed, "replace ")
+		} else {
+			continue
+		}
+		// "A [version] => B [version]"
+		halves := strings.SplitN(replLine, " => ", 2)
+		if len(halves) != 2 {
+			continue
+		}
+		lhsParts := strings.Fields(halves[0])
+		if len(lhsParts) == 0 {
+			continue
+		}
+		modName := lhsParts[0]
+		rhsParts := strings.Fields(strings.TrimSpace(halves[1]))
+		if len(rhsParts) == 0 {
+			continue
+		}
+		localPath := rhsParts[0]
+		if !strings.HasPrefix(localPath, "/") && !strings.HasPrefix(localPath, ".") {
+			continue // モジュール+バージョンによる置換はスキップ
+		}
+		if !filepath.IsAbs(localPath) {
+			localPath = filepath.Join(modRoot, localPath)
+		}
+		result[modName] = localPath
+	}
+	return result
 }
 
 // parsePackage はパッケージディレクトリの .go ファイルから宣言・imports・名前を収集する。
@@ -232,7 +391,6 @@ func (b *bundler) renameDecls(decls []ast.Decl, pkgShortName string) []ast.Decl 
 					d.Name.Name = newName
 				}
 			}
-			// 同一パッケージ内で衝突名を呼び出している箇所を修正
 			b.rewriteIdentInFunc(d, renames)
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
@@ -254,7 +412,6 @@ func (b *bundler) renameDecls(decls []ast.Decl, pkgShortName string) []ast.Decl 
 	return decls
 }
 
-// rewriteIdentInFunc はライブラリ関数本体内の単純識別子呼び出しをリネームする。
 func (b *bundler) rewriteIdentInFunc(fn *ast.FuncDecl, renames map[string]string) {
 	if fn.Body == nil {
 		return
@@ -273,7 +430,6 @@ func (b *bundler) rewriteIdentInFunc(fn *ast.FuncDecl, renames map[string]string
 	})
 }
 
-// rewriteFile は main.go 内の pkg.Name 形式のセレクタを解決済み名に書き換える。
 func (b *bundler) rewriteFile(f *ast.File) {
 	for _, decl := range f.Decls {
 		b.rewriteDecl(decl)
@@ -408,7 +564,6 @@ func (b *bundler) rewriteExpr(expr ast.Expr) ast.Expr {
 				if newName, ok := renames[e.Sel.Name]; ok {
 					return &ast.Ident{Name: newName}
 				}
-				// パッケージは知っているが名前が未登録（型アサーション等）
 				return &ast.Ident{Name: e.Sel.Name}
 			}
 		}
@@ -476,12 +631,10 @@ func rebuildImports(mainFile *ast.File, allImports map[string]bool) {
 		}
 		newDecls = append(newDecls, decl)
 	}
-
 	if len(allImports) == 0 {
 		mainFile.Decls = newDecls
 		return
 	}
-
 	specs := make([]ast.Spec, 0, len(allImports))
 	for imp := range allImports {
 		specs = append(specs, &ast.ImportSpec{
