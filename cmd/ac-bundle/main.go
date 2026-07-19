@@ -18,7 +18,7 @@ func main() {
 	flag.Parse()
 
 	if *inFlag == "" {
-		fmt.Fprintln(os.Stderr, "usage: bundle -in <main.go> [-out <submit.go>]")
+		fmt.Fprintln(os.Stderr, "usage: ac-bundle -in <main.go> [-out <submit.go>]")
 		os.Exit(1)
 	}
 
