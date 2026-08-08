@@ -38,6 +38,10 @@ func main() {
 	}
 }
 
+// libraryModulePath はインライン展開の対象とする唯一のモジュールパス。
+// これ以外の import（標準ライブラリ・他の外部モジュール）は展開せず通常の import のまま残す。
+const libraryModulePath = "github.com/hima398/go-programming-contest-library"
+
 type pkgMeta struct {
 	importPath string
 	shortName  string
@@ -61,14 +65,30 @@ func bundle(mainPath string) ([]byte, error) {
 		return nil, err
 	}
 
-	// go.mod の require / replace ブロックを解析
-	gomodData, err := os.ReadFile(filepath.Join(modRoot, "go.mod"))
-	if err != nil {
-		return nil, fmt.Errorf("go.mod 読み込みエラー: %w", err)
+	// libraryModulePath のソースがどこにあるかを解決する。
+	// このリポジトリ自身で作業している場合は modRoot がそのままライブラリのルート。
+	// それ以外（他プロジェクトから go get されて使われている場合）は、その
+	// プロジェクトの go.mod の replace / require から解決する。
+	var libRoot string
+	if modName == libraryModulePath {
+		libRoot = modRoot
+	} else {
+		gomodData, err := os.ReadFile(filepath.Join(modRoot, "go.mod"))
+		if err != nil {
+			return nil, fmt.Errorf("go.mod 読み込みエラー: %w", err)
+		}
+		gomodStr := string(gomodData)
+		if localPath, ok := parseReplaces(gomodStr, modRoot)[libraryModulePath]; ok {
+			libRoot = localPath
+		} else if ver, ok := parseRequires(gomodStr)[libraryModulePath]; ok {
+			libRoot, err = resolveModuleDir(libraryModulePath, ver)
+			if err != nil {
+				return nil, fmt.Errorf("%s の解決失敗: %w", libraryModulePath, err)
+			}
+		}
+		// require/replace のどちらにもなければ libRoot は空のまま
+		// （main.go が実際に import していなければ問題ない。import していればこの後エラーになる）
 	}
-	gomodStr := string(gomodData)
-	requires := parseRequires(gomodStr)
-	replaces := parseReplaces(gomodStr, modRoot)
 
 	fset := token.NewFileSet()
 	mainFile, err := parser.ParseFile(fset, absMain, nil, parser.ParseComments)
@@ -76,53 +96,29 @@ func bundle(mainPath string) ([]byte, error) {
 		return nil, fmt.Errorf("main.go parse error: %w", err)
 	}
 
-	// import を自モジュール / 外部モジュール / 標準ライブラリに分類
+	// import を「libraryModulePath 配下」とそれ以外に分類する。
+	// インライン展開するのは libraryModulePath 配下のパッケージのみ。
 	var localPkgs []pkgMeta
 	inlinedPaths := map[string]bool{} // インライン展開するパス
 
+	libPrefix := libraryModulePath + "/"
 	for _, imp := range mainFile.Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
 		shortName := path[strings.LastIndex(path, "/")+1:]
 
-		if strings.HasPrefix(path, modName+"/") {
-			// 自モジュール: modRoot 以下で解決
-			rel := strings.TrimPrefix(path, modName+"/")
+		if strings.HasPrefix(path, libPrefix) {
+			if libRoot == "" {
+				return nil, fmt.Errorf("%s を import していますが、go.mod に require/replace が見つかりません", path)
+			}
+			rel := strings.TrimPrefix(path, libPrefix)
 			localPkgs = append(localPkgs, pkgMeta{
 				importPath: path,
 				shortName:  shortName,
-				dir:        filepath.Join(modRoot, rel),
-			})
-			inlinedPaths[path] = true
-		} else {
-			// 外部モジュール: replace → GOMODCACHE の順で解決
-			extMod, ver, subPath, ok := findModuleForImport(path, requires)
-			if !ok {
-				// require になくても replace だけある場合（go.sum 管理外のローカル置換）
-				extMod, _, subPath, ok = findModuleForImport(path, replaces)
-				if !ok {
-					continue
-				}
-				ver = ""
-			}
-			var srcDir string
-			if localPath, ok := replaces[extMod]; ok {
-				// replace ディレクティブ優先（ローカルチェックアウト）
-				srcDir = localPath
-			} else {
-				// モジュールキャッシュから解決
-				srcDir, err = resolveModuleDir(extMod, ver)
-				if err != nil {
-					return nil, fmt.Errorf("外部モジュール解決失敗 %s: %w", path, err)
-				}
-			}
-			pkgDir := filepath.Join(srcDir, subPath)
-			localPkgs = append(localPkgs, pkgMeta{
-				importPath: path,
-				shortName:  shortName,
-				dir:        pkgDir,
+				dir:        filepath.Join(libRoot, rel),
 			})
 			inlinedPaths[path] = true
 		}
+		// libraryModulePath 以外（他の外部モジュール・標準ライブラリ）は展開せず通常の import のまま残す
 	}
 
 	if len(localPkgs) == 0 {
@@ -201,23 +197,6 @@ func bundle(mainPath string) ([]byte, error) {
 		return nil, fmt.Errorf("format error: %w", err)
 	}
 	return []byte(buf.String()), nil
-}
-
-// findModuleForImport は importPath がどの外部モジュールに属するかを requires から探す。
-// 最長一致（より具体的なモジュール名を優先）で返す。
-func findModuleForImport(importPath string, requires map[string]string) (modName, version, subPath string, ok bool) {
-	bestLen := 0
-	for mod, ver := range requires {
-		if importPath == mod || strings.HasPrefix(importPath, mod+"/") {
-			if len(mod) > bestLen {
-				bestLen = len(mod)
-				modName, version = mod, ver
-				subPath = strings.TrimPrefix(strings.TrimPrefix(importPath, mod), "/")
-				ok = true
-			}
-		}
-	}
-	return
 }
 
 // resolveModuleDir は Go モジュールキャッシュからモジュールのローカルパスを返す。
