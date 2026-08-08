@@ -52,6 +52,7 @@ func (t *SpanningTree) computeDistance(x int) []int {
 	}
 	var q []int
 	q = append(q, x)
+	dist[x] = 0
 	for len(q) > 0 {
 		cur := q[0]
 		q = q[1:]
