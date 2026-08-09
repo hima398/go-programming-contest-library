@@ -17,6 +17,14 @@ func NewMatrix(r, c int) *Matrix {
 	return res
 }
 
+func (m *Matrix) Get(i, j int) int {
+	return m.data[i][j]
+}
+
+func (m *Matrix) Set(i, j, x int) {
+	m.data[i][j] = x
+}
+
 func (m1 *Matrix) ModMul(m2 *Matrix, p int) *Matrix {
 	res := NewMatrix(m1.r, m2.c)
 
