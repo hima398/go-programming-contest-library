@@ -43,6 +43,60 @@ ac-bundle -in contest/abc300/main.go -out contest/abc300/submit.go
 make bundle CONTEST=contest/abc300
 ```
 
+### AHC などでロジックをファイル分割したい場合
+
+`ac-bundle` は `-in` に指定した1ファイルしか読みません。`main.go` と同じディレクトリに
+`domain.go` のような兄弟ファイル（同じ `package main`）を置いて分割しても、それらは
+import 文を経由しないため結合対象になりません。
+
+ロジックを分割したい場合は、`main.go` のあるディレクトリの**サブフォルダ**にパッケージとして
+切り出してください。`-in` 配下のサブフォルダは、自モジュールのパッケージとして inline 展開されます。
+
+```
+develop/
+├── main.go          // package main、solver を import
+└── solver/
+    ├── domain.go    // package solver
+    ├── io.go
+    └── util.go
+```
+
+```go
+// develop/main.go（go.mod の module が example.com/proj の場合）
+import (
+    "example.com/proj/develop/solver"
+)
+```
+
+- ディレクトリ直下の全 `.go`（`_test.go` を除く）が1つのパッケージとして結合されます。
+- パッケージ名はディレクトリ名と一致させてください。
+- `main.go` から参照する識別子は export（大文字始まり）にしてください。
+- 名前の候補: `solver` `sol` `core` `logic` `sim`。標準ライブラリ名（`io` `sort` など）や
+  既存ライブラリパッケージ名（`util` `slice` など）は避けてください。
+
+### ac-bundle が結合できる範囲
+
+`ac-bundle` が inline 展開するのは、`main.go` が**直接** import している次のパッケージのみです。
+
+- import path が `github.com/hima398/go-programming-contest-library/` から始まるパッケージ
+- `-in` の `main.go` があるディレクトリ配下のサブフォルダ（`<module>/<main.goのディレクトリ>/...`）
+
+| 対象 | 結合される？ |
+|---|---|
+| `dsu` などライブラリ直下のパッケージ | される |
+| `-in` 配下のサブフォルダ（例: `develop/solver`） | される |
+| 標準ライブラリ・外部モジュール（`fmt`, `golang.org/x/...` など） | されない（通常の import 文のまま残る） |
+| `main.go` と同階層の兄弟ファイル（同一 `package main` への分割） | されない（import を経由しないため） |
+| 展開したパッケージがさらに import するパッケージ | されない（展開は1段のみ） |
+
+#### 制約
+
+- `main.go` で import にエイリアスを付けない（`import d ".../dsu"` は不可）。
+- 展開するパッケージの型を slice / map / chan 型の中や struct フィールド、レシーバに
+  書くと置換されず、コンパイルエラーになります（関数の引数・戻り値、`var`、式の中は可）。
+- `main.go` の標準ライブラリ import にエイリアスを付けない（展開時にエイリアスが消えます）。
+- `main.go` のトップレベル名が展開パッケージの名前と衝突しないようにする。
+
 ### パターン2: 別の Go プロジェクトから使う場合
 
 別プロジェクトの `go.mod` にこのライブラリを追加します。

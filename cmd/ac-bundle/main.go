@@ -38,8 +38,9 @@ func main() {
 	}
 }
 
-// libraryModulePath はインライン展開の対象とする唯一のモジュールパス。
-// これ以外の import（標準ライブラリ・他の外部モジュール）は展開せず通常の import のまま残す。
+// libraryModulePath はインライン展開の対象とするライブラリのモジュールパス。
+// これと -in 配下のサブフォルダ以外の import（標準ライブラリ・他の外部モジュール）は
+// 展開せず通常の import のまま残す。
 const libraryModulePath = "github.com/hima398/go-programming-contest-library"
 
 type pkgMeta struct {
@@ -102,11 +103,30 @@ func bundle(mainPath string) ([]byte, error) {
 	inlinedPaths := map[string]bool{} // インライン展開するパス
 
 	libPrefix := libraryModulePath + "/"
+
+	// -in の main.go があるディレクトリ配下のサブフォルダ（自モジュールのパッケージ）も展開対象にする。
+	mainDir := filepath.Dir(absMain)
+	relMainDir, err := filepath.Rel(modRoot, mainDir)
+	if err != nil {
+		return nil, err
+	}
+	subPrefix := modName + "/"
+	if relMainDir != "." {
+		subPrefix += filepath.ToSlash(relMainDir) + "/"
+	}
+
 	for _, imp := range mainFile.Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
 		shortName := path[strings.LastIndex(path, "/")+1:]
 
-		if strings.HasPrefix(path, libPrefix) {
+		if strings.HasPrefix(path, subPrefix) {
+			localPkgs = append(localPkgs, pkgMeta{
+				importPath: path,
+				shortName:  shortName,
+				dir:        filepath.Join(mainDir, filepath.FromSlash(strings.TrimPrefix(path, subPrefix))),
+			})
+			inlinedPaths[path] = true
+		} else if strings.HasPrefix(path, libPrefix) {
 			if libRoot == "" {
 				return nil, fmt.Errorf("%s を import していますが、go.mod に require/replace が見つかりません", path)
 			}
