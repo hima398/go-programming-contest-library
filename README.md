@@ -1,14 +1,14 @@
 # go-programming-contest-library
 
 AtCoder などの競技プログラミング向け Go ライブラリ集です。
-開発時は各パッケージを `import` して使い、提出前に `bundle` コマンドで単一ファイルにまとめます。
+開発時は各パッケージを `import` して使い、提出前に `ac-bundle` コマンドで単一ファイルにまとめます。
 
 ---
 
-## bundle コマンドのインストール
+## ac-bundle コマンドのインストール
 
 ```bash
-go install github.com/hima398/go-programming-contest-library/cmd/bundle@latest
+go install github.com/hima398/go-programming-contest-library/cmd/ac-bundle@latest
 ```
 
 ---
@@ -38,7 +38,7 @@ func main() {
 提出用ファイルを生成します。
 
 ```bash
-bundle -in contest/abc300/main.go -out contest/abc300/submit.go
+ac-bundle -in contest/abc300/main.go -out contest/abc300/submit.go
 # または
 make bundle CONTEST=contest/abc300
 ```
@@ -61,10 +61,10 @@ require github.com/hima398/go-programming-contest-library v0.0.0
 replace github.com/hima398/go-programming-contest-library => /path/to/local/checkout
 ```
 
-bundle を実行します。
+ac-bundle を実行します。
 
 ```bash
-bundle -in abc300/main.go -out abc300/submit.go
+ac-bundle -in abc300/main.go -out abc300/submit.go
 ```
 
 ---
@@ -81,3 +81,8 @@ bundle -in abc300/main.go -out abc300/submit.go
 | `util` | 座標圧縮 |
 | `string` | ハミング距離 |
 | `bigfield` | 大きなグリッド上の2次元累積和 |
+| `avltree` | AVL木（`Put`/`Remove`/`IndexOf` は未実装） |
+| `matrix` | 行列演算（mod付き乗算・累乗） |
+| `numeric` | 数値計算ユーティリティ（Gcd/Lcm/Sqrt など） |
+| `slice` | スライス操作ユーティリティ |
+| `spanningtree` | 木の直径計算 |
